@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.dialects.postgresql import JSON, ARRAY, JSONB, VARCHAR
 from llama_index.core.bridge.pydantic import Field, PrivateAttr
 from llama_index.core.storage.chat_store.base import BaseChatStore
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 
 def get_data_model(
@@ -249,17 +250,15 @@ class PostgresChatStore(BaseChatStore):
     def add_message(self, key: str, message: ChatMessage) -> None:
         """Add a message for a key."""
         with self._session() as session:
-            stmt = text(
-                f"""
-                INSERT INTO {self.schema_name}.{self._table_class.__tablename__} (key, value)
-                VALUES (:key, :value)
-                ON CONFLICT (key)
-                DO UPDATE SET
-                    value = array_cat({self._table_class.__tablename__}.value, :value);
-                """
+            stmt = (
+                pg_insert(self._table_class)
+                .values(key=key, value=[message.dict()])
+                .on_conflict_do_update(
+                    index_elements=["key"],
+                    set_={"value": self._table_class.value + [message.dict()]},
+                )
             )
-            params = {"key": key, "value": [json.dumps(message.dict())]}
-            session.execute(stmt, params)
+            session.execute(stmt)
             session.commit()
 
     async def async_add_message(self, key: str, message: ChatMessage) -> None:
